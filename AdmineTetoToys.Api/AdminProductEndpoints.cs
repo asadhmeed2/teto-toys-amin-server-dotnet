@@ -39,11 +39,45 @@ public static class AdminProductEndpoints
             if (session == null)
                 return (false, null, Results.Json(new { error = "unauthorized", error_description = "Session expired. Please log in again." }, statusCode: 401));
 
-            if (!string.Equals(session.Role, "Admin", StringComparison.OrdinalIgnoreCase))
-                return (false, null, Results.Json(new { error = "forbidden", error_description = "Only Admin users can perform this action." }, statusCode: 403));
+            if (!string.Equals(session.Role, "Admin", StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(session.Role, "Partner", StringComparison.OrdinalIgnoreCase))
+                return (false, null, Results.Json(new { error = "forbidden", error_description = "Only Admin or Partner users can perform this action." }, statusCode: 403));
 
             return (true, userInfo, null);
         }
+
+        // GET /api/admin/parts — Get parts paginated
+        partsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        {
+            var authCheck = await ValidateAdminSessionAsync(context);
+            if (!authCheck.Authorized) return authCheck.ErrorResult!;
+
+            int pageVal = page ?? 1;
+            int pageSizeVal = pageSize ?? 10;
+            if (pageVal < 1) pageVal = 1;
+            if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 10;
+
+            var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
+            var (items, totalCount) = await productRepo.GetPartsPaginatedAsync(pageVal, pageSizeVal, search);
+
+            var totalPages = (int)Math.Ceiling((double)totalCount / pageSizeVal);
+
+            return Results.Ok(new
+            {
+                items = items.Select(p => new
+                {
+                    part_id = p.PartId,
+                    title = p.Title,
+                    description = p.Description,
+                    price = p.Price,
+                    image_urls = p.ImageUrls
+                }),
+                total_count = totalCount,
+                page = pageVal,
+                page_size = pageSizeVal,
+                total_pages = totalPages
+            });
+        });
 
         // POST /api/admin/parts — Add a part
         partsGroup.MapPost("/", async (AddPartRequest request, HttpContext context) =>
