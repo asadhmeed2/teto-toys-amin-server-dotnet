@@ -1,0 +1,21 @@
+using System.Text.Json.Serialization;
+
+namespace AdmineTetoToys.Application.DTOs;
+
+public record AddProductRequest(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("subtitle")] string? Subtitle,
+    [property: JsonPropertyName("description")] string? Description,
+    [property: JsonPropertyName("category")] string Category,
+    [property: JsonPropertyName("subcategory")] string? Subcategory,
+    [property: JsonPropertyName("price")] decimal Price,
+    [property: JsonPropertyName("part_ids")] List<string> PartIds,
+    [property: JsonPropertyName("image_urls")] List<string>? ImageUrls
+);
+
+public record AddPartRequest(
+    [property: JsonPropertyName("title")] string Title,
+    [property: JsonPropertyName("description")] string? Description,
+    [property: JsonPropertyName("price")] decimal Price,
+    [property: JsonPropertyName("image_urls")] List<string>? ImageUrls  
+);

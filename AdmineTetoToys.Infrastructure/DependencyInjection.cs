@@ -51,6 +51,7 @@ public static class DependencyInjection
         var mysqlConnectionString = connBuilder.ConnectionString;
         services.AddScoped<IUserRepository>(_ => new UserRepository(mysqlConnectionString));
         services.AddScoped<IAdminUserRepository>(_ => new AdminUserRepository(mysqlConnectionString));
+        services.AddScoped<IProductRepository>(_ => new ProductRepository(mysqlConnectionString));
 
         // Security
         services.AddSingleton<IPasswordHasher, PasswordHasher>();
