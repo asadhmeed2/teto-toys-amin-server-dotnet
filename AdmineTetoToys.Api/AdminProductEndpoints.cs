@@ -14,42 +14,12 @@ public static class AdminProductEndpoints
         var productsGroup = app.MapGroup("/api/admin/products");
         var partsGroup = app.MapGroup("/api/admin/parts");
 
-        // Helper to validate Admin session in Redis
-        async Task<(bool Authorized, object? UserInfo, IResult? ErrorResult)> ValidateAdminSessionAsync(HttpContext context)
-        {
-            var tokenService = context.RequestServices.GetRequiredService<ITokenService>();
-            var redisService = context.RequestServices.GetRequiredService<IRedisCacheService>();
-            var config = context.RequestServices.GetRequiredService<IConfiguration>();
 
-            var authHeader = context.Request.Headers.Authorization.ToString();
-            if (!authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                return (false, null, Results.Json(new { error = "unauthorized", error_description = "Missing or invalid Authorization header." }, statusCode: 401));
-
-            var secret = config["JWT:SECRET"] ?? "SuperSecretKeyForTetoToysTokenAuth2026";
-            var userInfo = tokenService.ValidateAndGetUserInfo(authHeader[7..], secret);
-            if (userInfo == null)
-                return (false, null, Results.Json(new { error = "unauthorized", error_description = "Token is invalid or expired." }, statusCode: 401));
-
-            var adminIdProp = userInfo.GetType().GetProperty("adminId");
-            var callerAdminId = adminIdProp?.GetValue(userInfo)?.ToString();
-            if (string.IsNullOrEmpty(callerAdminId))
-                return (false, null, Results.Json(new { error = "unauthorized", error_description = "Could not identify caller." }, statusCode: 401));
-
-            var session = await redisService.GetAdminSessionAsync(callerAdminId);
-            if (session == null)
-                return (false, null, Results.Json(new { error = "unauthorized", error_description = "Session expired. Please log in again." }, statusCode: 401));
-
-            if (!string.Equals(session.Role, "Admin", StringComparison.OrdinalIgnoreCase) &&
-                !string.Equals(session.Role, "Partner", StringComparison.OrdinalIgnoreCase))
-                return (false, null, Results.Json(new { error = "forbidden", error_description = "Only Admin or Partner users can perform this action." }, statusCode: 403));
-
-            return (true, userInfo, null);
-        }
 
         // GET /api/admin/parts — Get parts paginated
         partsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
         {
-            var authCheck = await ValidateAdminSessionAsync(context);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             int pageVal = page ?? 1;
@@ -82,7 +52,7 @@ public static class AdminProductEndpoints
         // POST /api/admin/parts — Add a part
         partsGroup.MapPost("/", async (AddPartRequest request, HttpContext context) =>
         {
-            var authCheck = await ValidateAdminSessionAsync(context);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             if (string.IsNullOrWhiteSpace(request.Title) || request.Price < 0)
@@ -113,7 +83,7 @@ public static class AdminProductEndpoints
         // POST /api/admin/products — Add a product with parts
         productsGroup.MapPost("/", async (AddProductRequest request, HttpContext context) =>
         {
-            var authCheck = await ValidateAdminSessionAsync(context);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             if (string.IsNullOrWhiteSpace(request.Title) || request.Category <= 0 || request.Price < 0)
@@ -176,7 +146,7 @@ public static class AdminProductEndpoints
         // GET /api/admin/products — Get products paginated
         productsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
         {
-            var authCheck = await ValidateAdminSessionAsync(context);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             int pageVal = page ?? 1;

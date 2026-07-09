@@ -16,35 +16,11 @@ public static class AdminUserEndpoints
         // POST /api/admin/users — create a new Admin or Partner user (Admin-only)
         group.MapPost("/", async (CreateAdminUserRequest request, HttpContext context) =>
         {
-            var tokenService = context.RequestServices.GetRequiredService<ITokenService>();
-            var redisService = context.RequestServices.GetRequiredService<IRedisCacheService>();
             var adminRepo = context.RequestServices.GetRequiredService<IAdminUserRepository>();
             var hasher = context.RequestServices.GetRequiredService<IPasswordHasher>();
-            var config = context.RequestServices.GetRequiredService<IConfiguration>();
 
-            // 1. Validate JWT from Authorization header
-            var authHeader = context.Request.Headers.Authorization.ToString();
-            if (!authHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
-                return Results.Json(new { error = "unauthorized", error_description = "Missing or invalid Authorization header." }, statusCode: 401);
-
-            var secret = config["JWT:SECRET"] ?? "SuperSecretKeyForTetoToysTokenAuth2026";
-            var userInfo = tokenService.ValidateAndGetUserInfo(authHeader[7..], secret);
-            if (userInfo == null)
-                return Results.Json(new { error = "unauthorized", error_description = "Token is invalid or expired." }, statusCode: 401);
-
-            // ponytail: extract adminId from validated token via reflection on anonymous object
-            var adminIdProp = userInfo.GetType().GetProperty("adminId");
-            var callerAdminId = adminIdProp?.GetValue(userInfo)?.ToString();
-            if (string.IsNullOrEmpty(callerAdminId))
-                return Results.Json(new { error = "unauthorized", error_description = "Could not identify caller." }, statusCode: 401);
-
-            // 2. Verify caller's session exists in Redis and role is Admin
-            var session = await redisService.GetAdminSessionAsync(callerAdminId);
-            if (session == null)
-                return Results.Json(new { error = "unauthorized", error_description = "Session expired. Please log in again." }, statusCode: 401);
-
-            if (!string.Equals(session.Role, "Admin", StringComparison.OrdinalIgnoreCase))
-                return Results.Json(new { error = "forbidden", error_description = "Only Admin users can create new users." }, statusCode: 403);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context, "Admin");
+            if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             // 3. Validate request
             if (string.IsNullOrWhiteSpace(request.Email) || string.IsNullOrWhiteSpace(request.Password)
