@@ -381,4 +381,108 @@ public class ProductRepository : IProductRepository
 
         return (items, totalCount);
     }
+
+    public async Task<Product?> GetProductByIdAsync(string productId)
+    {
+        const string sql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE product_id = @productId";
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@productId", productId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+            return null;
+
+        return new Product
+        {
+            ProductId = reader.GetGuid(reader.GetOrdinal("product_id")).ToString(),
+            Title = reader.GetString(reader.GetOrdinal("title")),
+            Subtitle = reader.IsDBNull(reader.GetOrdinal("subtitle")) ? null : reader.GetString(reader.GetOrdinal("subtitle")),
+            Description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
+            Category = reader.GetInt32(reader.GetOrdinal("category")),
+            Subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? null : reader.GetInt32(reader.GetOrdinal("subcategory")),
+            Price = reader.GetDecimal(reader.GetOrdinal("price")),
+            ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
+                ? new List<string>() 
+                : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>()
+        };
+    }
+
+    public async Task<List<string>> GetProductPartIdsAsync(string productId)
+    {
+        var partIds = new List<string>();
+        const string sql = "SELECT part_id FROM product_parts WHERE product_id = @productId";
+
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var cmd = new MySqlCommand(sql, conn);
+        cmd.Parameters.AddWithValue("@productId", productId);
+
+        await using var reader = await cmd.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            partIds.Add(reader.GetGuid(0).ToString());
+        }
+
+        return partIds;
+    }
+
+    public async Task UpdateProductWithPartsAsync(Product product, List<string> partIds)
+    {
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        try
+        {
+            // 1. Update product
+            const string updateProductSql = @"
+                UPDATE products 
+                SET title = @title, subtitle = @subtitle, description = @description, 
+                    category = @category, subcategory = @subcategory, price = @price, image_urls = @imageUrls
+                WHERE product_id = @productId";
+            
+            await using var productCmd = new MySqlCommand(updateProductSql, conn, transaction);
+            productCmd.Parameters.AddWithValue("@productId", product.ProductId);
+            productCmd.Parameters.AddWithValue("@title", product.Title);
+            productCmd.Parameters.AddWithValue("@subtitle", (object?)product.Subtitle ?? DBNull.Value);
+            productCmd.Parameters.AddWithValue("@description", (object?)product.Description ?? DBNull.Value);
+            productCmd.Parameters.AddWithValue("@category", product.Category);
+            productCmd.Parameters.AddWithValue("@subcategory", (object?)product.Subcategory ?? DBNull.Value);
+            productCmd.Parameters.AddWithValue("@price", product.Price);
+            productCmd.Parameters.AddWithValue("@imageUrls", product.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(product.ImageUrls) : DBNull.Value);
+            await productCmd.ExecuteNonQueryAsync();
+
+            // 2. Delete existing relationships in product_parts
+            const string deleteRelationSql = "DELETE FROM product_parts WHERE product_id = @productId";
+            await using var deleteCmd = new MySqlCommand(deleteRelationSql, conn, transaction);
+            deleteCmd.Parameters.AddWithValue("@productId", product.ProductId);
+            await deleteCmd.ExecuteNonQueryAsync();
+
+            // 3. Insert relationships in product_parts
+            if (partIds != null && partIds.Count > 0)
+            {
+                const string insertRelationSql = @"
+                    INSERT INTO product_parts (product_id, part_id)
+                    VALUES (@productId, @partId)";
+
+                foreach (var partId in partIds)
+                {
+                    await using var relationCmd = new MySqlCommand(insertRelationSql, conn, transaction);
+                    relationCmd.Parameters.AddWithValue("@productId", product.ProductId);
+                    relationCmd.Parameters.AddWithValue("@partId", partId);
+                    await relationCmd.ExecuteNonQueryAsync();
+                }
+            }
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
+    }
 }

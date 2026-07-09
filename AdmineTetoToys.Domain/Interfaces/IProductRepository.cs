@@ -5,6 +5,9 @@ namespace AdmineTetoToys.Domain.Interfaces;
 public interface IProductRepository
 {
     Task CreateProductWithPartsAsync(Product product, List<string> partIds);
+    Task<Product?> GetProductByIdAsync(string productId);
+    Task<List<string>> GetProductPartIdsAsync(string productId);
+    Task UpdateProductWithPartsAsync(Product product, List<string> partIds);
     Task CreatePartAsync(Part part);
     Task<bool> PartExistsAsync(string partId);
     Task<(List<Part> Items, int TotalCount)> GetPartsPaginatedAsync(int page, int pageSize, string? search);
