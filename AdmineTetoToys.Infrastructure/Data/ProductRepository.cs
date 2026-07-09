@@ -144,7 +144,7 @@ public class ProductRepository : IProductRepository
                     Price = reader.GetDecimal(reader.GetOrdinal("price")),
                     ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
                         ? new List<string>() 
-                        : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls")))
+                        : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>()
                 };
                 items.Add(part);
             }
