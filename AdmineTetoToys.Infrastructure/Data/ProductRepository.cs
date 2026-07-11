@@ -54,6 +54,7 @@ public class ProductRepository : IProductRepository
                 }
             }
 
+            await RecalculateCategoryActiveCountAsync(conn, transaction, product.Category);
             await transaction.CommitAsync();
         }
         catch
@@ -440,6 +441,19 @@ public class ProductRepository : IProductRepository
 
         try
         {
+            // 0. Get original category before update
+            const string getOriginalCatSql = "SELECT category FROM products WHERE product_id = @productId";
+            int originalCategoryId = 0;
+            await using (var getCmd = new MySqlCommand(getOriginalCatSql, conn, transaction))
+            {
+                getCmd.Parameters.AddWithValue("@productId", product.ProductId);
+                var result = await getCmd.ExecuteScalarAsync();
+                if (result != null && result != DBNull.Value)
+                {
+                    originalCategoryId = Convert.ToInt32(result);
+                }
+            }
+
             // 1. Update product
             const string updateProductSql = @"
                 UPDATE products 
@@ -482,6 +496,16 @@ public class ProductRepository : IProductRepository
                 }
             }
 
+            // 4. Recalculate original and new category active counts
+            if (originalCategoryId > 0)
+            {
+                await RecalculateCategoryActiveCountAsync(conn, transaction, originalCategoryId);
+            }
+            if (product.Category != originalCategoryId)
+            {
+                await RecalculateCategoryActiveCountAsync(conn, transaction, product.Category);
+            }
+
             await transaction.CommitAsync();
         }
         catch
@@ -493,11 +517,50 @@ public class ProductRepository : IProductRepository
 
     public async Task SoftDeleteProductAsync(string productId)
     {
-        const string sql = "UPDATE products SET is_deleted = 1 WHERE product_id = @productId";
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@productId", productId);
+
+        // 1. Get original category
+        const string getCatSql = "SELECT category FROM products WHERE product_id = @productId";
+        int categoryId = 0;
+        await using (var getCmd = new MySqlCommand(getCatSql, conn))
+        {
+            getCmd.Parameters.AddWithValue("@productId", productId);
+            var result = await getCmd.ExecuteScalarAsync();
+            if (result != null && result != DBNull.Value)
+            {
+                categoryId = Convert.ToInt32(result);
+            }
+        }
+
+        // 2. Set is_deleted = 1
+        const string deleteSql = "UPDATE products SET is_deleted = 1 WHERE product_id = @productId";
+        await using (var deleteCmd = new MySqlCommand(deleteSql, conn))
+        {
+            deleteCmd.Parameters.AddWithValue("@productId", productId);
+            await deleteCmd.ExecuteNonQueryAsync();
+        }
+
+        // 3. Recalculate category count
+        if (categoryId > 0)
+        {
+            await RecalculateCategoryActiveCountAsync(conn, null, categoryId);
+        }
+    }
+
+    private async Task RecalculateCategoryActiveCountAsync(MySqlConnection conn, MySqlTransaction? transaction, int categoryId)
+    {
+        const string sql = @"
+            UPDATE categories 
+            SET number_of_active_products = (
+                SELECT COUNT(*) 
+                FROM products 
+                WHERE category = @categoryId AND is_deleted = 0 AND is_displayed = 1
+            )
+            WHERE id = @categoryId";
+        
+        await using var cmd = new MySqlCommand(sql, conn, transaction);
+        cmd.Parameters.AddWithValue("@categoryId", categoryId);
         await cmd.ExecuteNonQueryAsync();
     }
 }
