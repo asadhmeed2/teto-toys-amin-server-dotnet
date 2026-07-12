@@ -93,6 +93,20 @@ public class JwtTokenService : ITokenService
         }
     }
 
+    public string? GetRoleFromToken(string token)
+    {
+        try
+        {
+            var handler = new JwtSecurityTokenHandler();
+            var jwt = handler.ReadJwtToken(token);
+            return jwt.Claims.FirstOrDefault(c => c.Type == ClaimTypes.Role)?.Value;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public object? ValidateAndGetUserInfo(string token, string secretKey)
     {
         try

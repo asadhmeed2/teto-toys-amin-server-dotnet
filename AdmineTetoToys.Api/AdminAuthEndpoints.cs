@@ -88,53 +88,34 @@ public static class AdminAuthEndpoints
             return Results.Ok(new { message = "Logged out successfully." });
         });
 
-        // POST /api/auth/refresh — Rotate refresh token and issue new access token
+        // POST /api/auth/refresh — issue a new access token from the existing refresh token
         group.MapPost("/refresh", async (HttpContext context) =>
         {
             var redisService = context.RequestServices.GetRequiredService<IRedisCacheService>();
             var tokenService = context.RequestServices.GetRequiredService<ITokenService>();
-            var adminRepo = context.RequestServices.GetRequiredService<IAdminUserRepository>();
             var config = context.RequestServices.GetRequiredService<IConfiguration>();
 
             var refreshToken = context.Request.Cookies["refresh_token"];
             if (string.IsNullOrEmpty(refreshToken) || !await redisService.ValidateRefreshTokenAsync(refreshToken))
                 return Results.Json(new { error = "invalid_token", error_description = "Missing or invalid session refresh token." }, statusCode: 401);
 
-            // Invalidate old token (token rotation)
-            await redisService.InvalidateRefreshTokenAsync(refreshToken);
-
             var adminId = tokenService.GetAdminIdFromToken(refreshToken);
-            if (string.IsNullOrEmpty(adminId))
+            var role = tokenService.GetRoleFromToken(refreshToken);
+            if (string.IsNullOrEmpty(adminId) || string.IsNullOrEmpty(role))
                 return Results.Json(new { error = "invalid_token", error_description = "Malformed refresh token." }, statusCode: 401);
 
-            var admin = await adminRepo.GetByIdAsync(adminId);
-            if (admin == null || !admin.IsActive)
-                return Results.Json(new { error = "invalid_grant", error_description = "Account is inactive or deleted." }, statusCode: 401);
-
             var secret = config["JWT:SECRET"] ?? "SuperSecretKeyForTetoToysTokenAuth2026";
-            string newAccessToken = tokenService.GenerateAccessToken(admin.AdminId, admin.Role, secret, 15);
-            string newRefreshToken = tokenService.GenerateRefreshToken(admin.AdminId, admin.Role, admin.FirstName, admin.LastName, secret, 1 * 24 * 60);
-            
-            await redisService.SetRefreshTokenAsync(newRefreshToken, TimeSpan.FromDays(7));
+            string newAccessToken = tokenService.GenerateAccessToken(adminId, role, secret, 15);
 
-            // Refresh the admin session lifetime in Redis
-            await redisService.SetAdminSessionAsync(admin.AdminId, admin.Role, TimeSpan.FromMinutes(15));
-
-            context.Response.Cookies.Append("refresh_token", newRefreshToken, new CookieOptions
-            {
-                HttpOnly = true,
-                SameSite = SameSiteMode.Strict,
-                Secure = false, // set true in production
-                MaxAge = TimeSpan.FromDays(7),
-                Path = "/",
-            });
+            // Keep the admin session alive in Redis for the same duration as the new access token
+            await redisService.SetAdminSessionAsync(adminId, role, TimeSpan.FromMinutes(15));
 
             return Results.Ok(new
             {
                 access_token = newAccessToken,
                 token_type = "Bearer",
                 expires_in = 900,
-                role = admin.Role,
+                role,
             });
         });
 
