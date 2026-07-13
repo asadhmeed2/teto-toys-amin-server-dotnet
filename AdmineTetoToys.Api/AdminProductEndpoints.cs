@@ -281,7 +281,7 @@ public static class AdminProductEndpoints
         // DELETE /api/admin/products/{productId} — Soft delete a product
         productsGroup.MapDelete("/{productId}", async (string productId, HttpContext context) =>
         {
-            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context, "Admin");
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();

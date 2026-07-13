@@ -25,7 +25,7 @@ public class ProductRepository : IProductRepository
             const string insertProductSql = @"
                 INSERT INTO products (product_id, title, subtitle, description, category, subcategory, price, image_urls, is_displayed)
                 VALUES (@productId, @title, @subtitle, @description, @category, @subcategory, @price, @imageUrls, @isDisplayed)";
-            
+
             await using var productCmd = new MySqlCommand(insertProductSql, conn, transaction);
             productCmd.Parameters.AddWithValue("@productId", product.ProductId);
             productCmd.Parameters.AddWithValue("@title", product.Title);
@@ -77,7 +77,7 @@ public class ProductRepository : IProductRepository
         cmd.Parameters.AddWithValue("@title", part.Title);
         cmd.Parameters.AddWithValue("@description", (object?)part.Description ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@price", part.Price);
-        cmd.Parameters.AddWithValue("@imageUrls", part.ImageUrls != null ?  System.Text.Json.JsonSerializer.Serialize(part.ImageUrls) : DBNull.Value);
+        cmd.Parameters.AddWithValue("@imageUrls", part.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(part.ImageUrls) : DBNull.Value);
         await cmd.ExecuteNonQueryAsync();
     }
 
@@ -144,8 +144,8 @@ public class ProductRepository : IProductRepository
                     Title = reader.GetString(reader.GetOrdinal("title")),
                     Description = reader.IsDBNull(reader.GetOrdinal("description")) ? null : reader.GetString(reader.GetOrdinal("description")),
                     Price = reader.GetDecimal(reader.GetOrdinal("price")),
-                    ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
-                        ? new List<string>() 
+                    ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls"))
+                        ? new List<string>()
                         : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>()
                 };
                 items.Add(part);
@@ -209,8 +209,8 @@ public class ProductRepository : IProductRepository
                     Category = reader.GetInt32(reader.GetOrdinal("category")),
                     Subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? null : reader.GetInt32(reader.GetOrdinal("subcategory")),
                     Price = reader.GetDecimal(reader.GetOrdinal("price")),
-                    ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
-                        ? new List<string>() 
+                    ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls"))
+                        ? new List<string>()
                         : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>(),
                     IsDisplayed = reader.GetBoolean(reader.GetOrdinal("is_displayed")),
                     IsDeleted = reader.GetBoolean(reader.GetOrdinal("is_deleted"))
@@ -408,8 +408,8 @@ public class ProductRepository : IProductRepository
             Category = reader.GetInt32(reader.GetOrdinal("category")),
             Subcategory = reader.IsDBNull(reader.GetOrdinal("subcategory")) ? null : reader.GetInt32(reader.GetOrdinal("subcategory")),
             Price = reader.GetDecimal(reader.GetOrdinal("price")),
-            ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls")) 
-                ? new List<string>() 
+            ImageUrls = reader.IsDBNull(reader.GetOrdinal("image_urls"))
+                ? new List<string>()
                 : System.Text.Json.JsonSerializer.Deserialize<List<string>>(reader.GetString(reader.GetOrdinal("image_urls"))) ?? new List<string>(),
             IsDisplayed = reader.GetBoolean(reader.GetOrdinal("is_displayed"))
         };
@@ -462,7 +462,7 @@ public class ProductRepository : IProductRepository
                     category = @category, subcategory = @subcategory, price = @price, 
                     image_urls = @imageUrls, is_displayed = @isDisplayed
                 WHERE product_id = @productId AND is_deleted = 0";
-            
+
             await using var productCmd = new MySqlCommand(updateProductSql, conn, transaction);
             productCmd.Parameters.AddWithValue("@productId", product.ProductId);
             productCmd.Parameters.AddWithValue("@title", product.Title);
@@ -559,7 +559,7 @@ public class ProductRepository : IProductRepository
                 WHERE category = @categoryId AND is_deleted = 0 AND is_displayed = 1
             )
             WHERE id = @categoryId";
-        
+
         await using var cmd = new MySqlCommand(sql, conn, transaction);
         cmd.Parameters.AddWithValue("@categoryId", categoryId);
         await cmd.ExecuteNonQueryAsync();
