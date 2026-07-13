@@ -278,6 +278,22 @@ public static class AdminProductEndpoints
             });
         });
 
+        // PATCH /api/admin/products/{productId}/display — Show or hide a product
+        productsGroup.MapPatch("/{productId}/display", async (string productId, SetProductDisplayRequest request, HttpContext context) =>
+        {
+            var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
+            if (!authCheck.Authorized) return authCheck.ErrorResult!;
+
+            var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
+            var product = await productRepo.GetProductByIdAsync(productId);
+            if (product == null)
+                return Results.NotFound();
+
+            await productRepo.SetProductDisplayAsync(productId, request.IsDisplayed);
+
+            return Results.Ok(new { product_id = productId, is_displayed = request.IsDisplayed });
+        });
+
         // DELETE /api/admin/products/{productId} — Soft delete a product
         productsGroup.MapDelete("/{productId}", async (string productId, HttpContext context) =>
         {

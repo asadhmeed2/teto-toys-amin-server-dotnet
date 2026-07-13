@@ -516,6 +516,36 @@ public class ProductRepository : IProductRepository
         }
     }
 
+    public async Task SetProductDisplayAsync(string productId, bool isDisplayed)
+    {
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        // 1. Get category for count recalculation
+        const string getCatSql = "SELECT category FROM products WHERE product_id = @productId";
+        int categoryId = 0;
+        await using (var getCmd = new MySqlCommand(getCatSql, conn))
+        {
+            getCmd.Parameters.AddWithValue("@productId", productId);
+            var result = await getCmd.ExecuteScalarAsync();
+            if (result != null && result != DBNull.Value)
+                categoryId = Convert.ToInt32(result);
+        }
+
+        // 2. Flip is_displayed
+        const string updateSql = "UPDATE products SET is_displayed = @isDisplayed WHERE product_id = @productId AND is_deleted = 0";
+        await using (var updateCmd = new MySqlCommand(updateSql, conn))
+        {
+            updateCmd.Parameters.AddWithValue("@isDisplayed", isDisplayed ? 1 : 0);
+            updateCmd.Parameters.AddWithValue("@productId", productId);
+            await updateCmd.ExecuteNonQueryAsync();
+        }
+
+        // 3. Recalculate category active count
+        if (categoryId > 0)
+            await RecalculateCategoryActiveCountAsync(conn, null, categoryId);
+    }
+
     public async Task SoftDeleteProductAsync(string productId)
     {
         await using var conn = new MySqlConnection(_connectionString);

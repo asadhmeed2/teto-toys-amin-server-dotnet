@@ -14,6 +14,10 @@ public record AddProductRequest(
     [property: JsonPropertyName("is_displayed")] bool? IsDisplayed
 );
 
+public record SetProductDisplayRequest(
+    [property: JsonPropertyName("is_displayed")] bool IsDisplayed
+);
+
 public record AddPartRequest(
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("description")] string? Description,
