@@ -17,7 +17,7 @@ public static class AdminProductEndpoints
 
 
         // GET /api/admin/parts — Get parts paginated
-        partsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        partsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search, string? language) =>
         {
             var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
@@ -26,9 +26,10 @@ public static class AdminProductEndpoints
             int pageSizeVal = pageSize ?? 10;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 10;
+            string languageVal = string.IsNullOrEmpty(language) ? "en" : language;
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
-            var (items, totalCount) = await productRepo.GetPartsPaginatedAsync(pageVal, pageSizeVal, search);
+            var (items, totalCount) = await productRepo.GetPartsPaginatedAsync(pageVal, pageSizeVal, search, languageVal);
 
             var totalPages = (int)Math.Ceiling((double)totalCount / pageSizeVal);
 
@@ -69,7 +70,8 @@ public static class AdminProductEndpoints
                 ImageUrls = request.ImageUrls ?? new List<string>()
             };
 
-            await productRepo.CreatePartAsync(part);
+            string partLanguage = string.IsNullOrEmpty(request.Language) ? "en" : request.Language;
+            await productRepo.CreatePartAsync(part, partLanguage);
 
             return Results.Json(new
             {
@@ -129,7 +131,8 @@ public static class AdminProductEndpoints
                 IsDisplayed = request.IsDisplayed ?? true
             };
 
-            await productRepo.CreateProductWithPartsAsync(product, request.PartIds ?? new List<string>());
+            string productLanguage = string.IsNullOrEmpty(request.Language) ? "en" : request.Language;
+            await productRepo.CreateProductWithPartsAsync(product, request.PartIds ?? new List<string>(), productLanguage);
 
             return Results.Json(new
             {
@@ -147,7 +150,7 @@ public static class AdminProductEndpoints
         });
 
         // GET /api/admin/products — Get products paginated
-        productsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        productsGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search, string? language) =>
         {
             var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
@@ -156,9 +159,10 @@ public static class AdminProductEndpoints
             int pageSizeVal = pageSize ?? 10;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 10;
+            string languageVal = string.IsNullOrEmpty(language) ? "en" : language;
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
-            var (items, totalCount) = await productRepo.GetProductsPaginatedAsync(pageVal, pageSizeVal, search);
+            var (items, totalCount) = await productRepo.GetProductsPaginatedAsync(pageVal, pageSizeVal, search, languageVal);
 
             var totalPages = (int)Math.Ceiling((double)totalCount / pageSizeVal);
 
@@ -185,13 +189,14 @@ public static class AdminProductEndpoints
         });
 
         // GET /api/admin/products/{productId} — Get a single product with associated part IDs
-        productsGroup.MapGet("/{productId}", async (string productId, HttpContext context) =>
+        productsGroup.MapGet("/{productId}", async (string productId, HttpContext context, string? language) =>
         {
             var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
 
+            string languageVal = string.IsNullOrEmpty(language) ? "en" : language;
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
-            var product = await productRepo.GetProductByIdAsync(productId);
+            var product = await productRepo.GetProductByIdAsync(productId, languageVal);
             if (product == null)
                 return Results.NotFound();
 
@@ -261,7 +266,8 @@ public static class AdminProductEndpoints
                 IsDisplayed = request.IsDisplayed ?? true
             };
 
-            await productRepo.UpdateProductWithPartsAsync(product, request.PartIds ?? new List<string>());
+            string updateLanguage = string.IsNullOrEmpty(request.Language) ? "en" : request.Language;
+            await productRepo.UpdateProductWithPartsAsync(product, request.PartIds ?? new List<string>(), updateLanguage);
 
             return Results.Ok(new
             {

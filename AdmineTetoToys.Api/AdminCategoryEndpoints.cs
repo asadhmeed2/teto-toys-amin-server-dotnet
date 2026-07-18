@@ -43,7 +43,8 @@ public static class AdminCategoryEndpoints
                 Slug = slug
             };
 
-            await productRepo.CreateCategoryAsync(category);
+            string categoryLanguage = string.IsNullOrEmpty(request.Language) ? "en" : request.Language;
+            await productRepo.CreateCategoryAsync(category, categoryLanguage);
 
             return Results.Json(new
             {
@@ -53,7 +54,7 @@ public static class AdminCategoryEndpoints
         });
 
         // GET /api/admin/categories
-        categoriesGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        categoriesGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search, string? language) =>
         {
             var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
@@ -62,9 +63,10 @@ public static class AdminCategoryEndpoints
             int pageSizeVal = pageSize ?? 20;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 20;
+            string languageVal = string.IsNullOrEmpty(language) ? "en" : language;
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
-            var (items, totalCount) = await productRepo.GetCategoriesPaginatedAsync(pageVal, pageSizeVal, search);
+            var (items, totalCount) = await productRepo.GetCategoriesPaginatedAsync(pageVal, pageSizeVal, search, languageVal);
 
             var totalPages = (int)Math.Ceiling((double)totalCount / pageSizeVal);
 
@@ -93,9 +95,10 @@ public static class AdminCategoryEndpoints
                 return Results.Json(new { error = "invalid_request", error_description = "Subcategory Name and a valid Parent Category ID are required." }, statusCode: 400);
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
+            string subcategoryLanguage = string.IsNullOrEmpty(request.Language) ? "en" : request.Language;
 
             var categoryExistsTask = productRepo.CategoryExistsAsync(request.CategoryId);
-            var subcategoryExistsTask = productRepo.SubcategoryExistsAsync(request.CategoryId, request.Name.Trim());
+            var subcategoryExistsTask = productRepo.SubcategoryExistsAsync(request.CategoryId, request.Name.Trim(), subcategoryLanguage);
 
             await Task.WhenAll(categoryExistsTask, subcategoryExistsTask);
 
@@ -111,7 +114,7 @@ public static class AdminCategoryEndpoints
                 Name = request.Name.Trim()
             };
 
-            await productRepo.CreateSubcategoryAsync(subcategory);
+            await productRepo.CreateSubcategoryAsync(subcategory, subcategoryLanguage);
 
             return Results.Json(new
             {
@@ -121,7 +124,7 @@ public static class AdminCategoryEndpoints
         });
 
         // GET /api/admin/subcategories
-        subcategoriesGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search) =>
+        subcategoriesGroup.MapGet("/", async (HttpContext context, int? page, int? pageSize, string? search, string? language) =>
         {
             var authCheck = await AdminSessionValidator.ValidateSessionAsync(context);
             if (!authCheck.Authorized) return authCheck.ErrorResult!;
@@ -130,9 +133,10 @@ public static class AdminCategoryEndpoints
             int pageSizeVal = pageSize ?? 20;
             if (pageVal < 1) pageVal = 1;
             if (pageSizeVal < 1 || pageSizeVal > 100) pageSizeVal = 20;
+            string languageVal = string.IsNullOrEmpty(language) ? "en" : language;
 
             var productRepo = context.RequestServices.GetRequiredService<IProductRepository>();
-            var (items, totalCount) = await productRepo.GetSubcategoriesPaginatedAsync(pageVal, pageSizeVal, search);
+            var (items, totalCount) = await productRepo.GetSubcategoriesPaginatedAsync(pageVal, pageSizeVal, search, languageVal);
 
             var totalPages = (int)Math.Ceiling((double)totalCount / pageSizeVal);
 

@@ -11,7 +11,8 @@ public record AddProductRequest(
     [property: JsonPropertyName("price")] decimal Price,
     [property: JsonPropertyName("part_ids")] List<string> PartIds,
     [property: JsonPropertyName("image_urls")] List<string>? ImageUrls,
-    [property: JsonPropertyName("is_displayed")] bool? IsDisplayed
+    [property: JsonPropertyName("is_displayed")] bool? IsDisplayed,
+    [property: JsonPropertyName("language")] string? Language
 );
 
 public record SetProductDisplayRequest(
@@ -22,5 +23,6 @@ public record AddPartRequest(
     [property: JsonPropertyName("title")] string Title,
     [property: JsonPropertyName("description")] string? Description,
     [property: JsonPropertyName("price")] decimal Price,
-    [property: JsonPropertyName("image_urls")] List<string>? ImageUrls  
+    [property: JsonPropertyName("image_urls")] List<string>? ImageUrls,
+    [property: JsonPropertyName("language")] string? Language
 );

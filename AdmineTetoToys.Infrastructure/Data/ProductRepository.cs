@@ -13,7 +13,7 @@ public class ProductRepository : IProductRepository
         _connectionString = connectionString;
     }
 
-    public async Task CreateProductWithPartsAsync(Product product, List<string> partIds)
+    public async Task CreateProductWithPartsAsync(Product product, List<string> partIds, string language = "en")
     {
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
@@ -21,22 +21,32 @@ public class ProductRepository : IProductRepository
 
         try
         {
-            // 1. Insert product
+            // 1. Insert product (non-translatable columns only)
             const string insertProductSql = @"
-                INSERT INTO products (product_id, title, subtitle, description, category, subcategory, price, image_urls, is_displayed)
-                VALUES (@productId, @title, @subtitle, @description, @category, @subcategory, @price, @imageUrls, @isDisplayed)";
+                INSERT INTO products (product_id, category, subcategory, price, image_urls, is_displayed)
+                VALUES (@productId, @category, @subcategory, @price, @imageUrls, @isDisplayed)";
 
             await using var productCmd = new MySqlCommand(insertProductSql, conn, transaction);
             productCmd.Parameters.AddWithValue("@productId", product.ProductId);
-            productCmd.Parameters.AddWithValue("@title", product.Title);
-            productCmd.Parameters.AddWithValue("@subtitle", (object?)product.Subtitle ?? DBNull.Value);
-            productCmd.Parameters.AddWithValue("@description", (object?)product.Description ?? DBNull.Value);
             productCmd.Parameters.AddWithValue("@category", product.Category);
             productCmd.Parameters.AddWithValue("@subcategory", (object?)product.Subcategory ?? DBNull.Value);
             productCmd.Parameters.AddWithValue("@price", product.Price);
             productCmd.Parameters.AddWithValue("@imageUrls", product.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(product.ImageUrls) : DBNull.Value);
             productCmd.Parameters.AddWithValue("@isDisplayed", product.IsDisplayed);
             await productCmd.ExecuteNonQueryAsync();
+
+            // 1b. Insert the translation row for the given (default 'en') language
+            const string insertTranslationSql = @"
+                INSERT INTO product_translations (product_id, language_code, title, subtitle, description)
+                VALUES (@productId, @language, @title, @subtitle, @description)";
+
+            await using var translationCmd = new MySqlCommand(insertTranslationSql, conn, transaction);
+            translationCmd.Parameters.AddWithValue("@productId", product.ProductId);
+            translationCmd.Parameters.AddWithValue("@language", language);
+            translationCmd.Parameters.AddWithValue("@title", product.Title);
+            translationCmd.Parameters.AddWithValue("@subtitle", (object?)product.Subtitle ?? DBNull.Value);
+            translationCmd.Parameters.AddWithValue("@description", (object?)product.Description ?? DBNull.Value);
+            await translationCmd.ExecuteNonQueryAsync();
 
             // 2. Insert relationships in product_parts
             if (partIds != null && partIds.Count > 0)
@@ -64,21 +74,45 @@ public class ProductRepository : IProductRepository
         }
     }
 
-    public async Task CreatePartAsync(Part part)
+    public async Task CreatePartAsync(Part part, string language = "en")
     {
-        const string sql = @"
-            INSERT INTO parts (part_id, title, description, price, image_urls)
-            VALUES (@partId, @title, @description, @price, @imageUrls)";
+        const string insertPartSql = @"
+            INSERT INTO parts (part_id, price, image_urls)
+            VALUES (@partId, @price, @imageUrls)";
+        const string insertTranslationSql = @"
+            INSERT INTO part_translations (part_id, language_code, title, description)
+            VALUES (@partId, @language, @title, @description)";
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@partId", part.PartId);
-        cmd.Parameters.AddWithValue("@title", part.Title);
-        cmd.Parameters.AddWithValue("@description", (object?)part.Description ?? DBNull.Value);
-        cmd.Parameters.AddWithValue("@price", part.Price);
-        cmd.Parameters.AddWithValue("@imageUrls", part.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(part.ImageUrls) : DBNull.Value);
-        await cmd.ExecuteNonQueryAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        try
+        {
+            await using (var cmd = new MySqlCommand(insertPartSql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@partId", part.PartId);
+                cmd.Parameters.AddWithValue("@price", part.Price);
+                cmd.Parameters.AddWithValue("@imageUrls", part.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(part.ImageUrls) : DBNull.Value);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            await using (var cmd = new MySqlCommand(insertTranslationSql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@partId", part.PartId);
+                cmd.Parameters.AddWithValue("@language", language);
+                cmd.Parameters.AddWithValue("@title", part.Title);
+                cmd.Parameters.AddWithValue("@description", (object?)part.Description ?? DBNull.Value);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<bool> PartExistsAsync(string partId)
@@ -93,7 +127,7 @@ public class ProductRepository : IProductRepository
         return Convert.ToInt32(result) > 0;
     }
 
-    public async Task<(List<Part> Items, int TotalCount)> GetPartsPaginatedAsync(int page, int pageSize, string? search)
+    public async Task<(List<Part> Items, int TotalCount)> GetPartsPaginatedAsync(int page, int pageSize, string? search, string language = "en")
     {
         var items = new List<Part>();
         int totalCount = 0;
@@ -102,15 +136,19 @@ public class ProductRepository : IProductRepository
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        // 1. Get total count
-        var countSql = "SELECT COUNT(1) FROM parts";
+        // 1. Get total count (same translation joins as the items query)
+        var countSql = @"
+            SELECT COUNT(1) FROM parts pa
+            LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = @language
+            LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            countSql += " WHERE title LIKE @search OR description LIKE @search";
+            countSql += " WHERE (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
         }
 
         await using (var countCmd = new MySqlCommand(countSql, conn))
         {
+            countCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -118,16 +156,24 @@ public class ProductRepository : IProductRepository
             totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
         }
 
-        // 2. Get paginated items
-        var itemsSql = "SELECT part_id, title, description, price, image_urls FROM parts";
+        // 2. Get paginated items (double LEFT JOIN part_translations resolves requested-language text with an 'en' fallback)
+        var itemsSql = @"
+            SELECT pa.part_id,
+                   COALESCE(req.title, fb.title) AS title,
+                   COALESCE(req.description, fb.description) AS description,
+                   pa.price, pa.image_urls
+            FROM parts pa
+            LEFT JOIN part_translations req ON req.part_id = pa.part_id AND req.language_code = @language
+            LEFT JOIN part_translations fb ON fb.part_id = pa.part_id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            itemsSql += " WHERE title LIKE @search OR description LIKE @search";
+            itemsSql += " WHERE (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
         }
-        itemsSql += " ORDER BY created_at DESC LIMIT @limit OFFSET @offset";
+        itemsSql += " ORDER BY pa.created_at DESC LIMIT @limit OFFSET @offset";
 
         await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
         {
+            itemsCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -155,7 +201,7 @@ public class ProductRepository : IProductRepository
         return (items, totalCount);
     }
 
-    public async Task<(List<Product> Items, int TotalCount)> GetProductsPaginatedAsync(int page, int pageSize, string? search)
+    public async Task<(List<Product> Items, int TotalCount)> GetProductsPaginatedAsync(int page, int pageSize, string? search, string language = "en")
     {
         var items = new List<Product>();
         int totalCount = 0;
@@ -164,15 +210,20 @@ public class ProductRepository : IProductRepository
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        // 1. Get total count
-        var countSql = "SELECT COUNT(1) FROM products WHERE 1=1";
+        // 1. Get total count (same translation joins as the items query)
+        var countSql = @"
+            SELECT COUNT(1) FROM products p
+            LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = @language
+            LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+            WHERE 1=1";
         if (!string.IsNullOrEmpty(search))
         {
-            countSql += " AND (title LIKE @search OR description LIKE @search)";
+            countSql += " AND (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
         }
 
         await using (var countCmd = new MySqlCommand(countSql, conn))
         {
+            countCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -180,16 +231,27 @@ public class ProductRepository : IProductRepository
             totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
         }
 
-        // 2. Get paginated items — includes soft-deleted products, flagged via is_deleted
-        var itemsSql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls, is_displayed, is_deleted FROM products WHERE 1=1";
+        // 2. Get paginated items — includes soft-deleted products, flagged via is_deleted.
+        // Double LEFT JOIN product_translations resolves requested-language text with an 'en' fallback.
+        var itemsSql = @"
+            SELECT p.product_id,
+                   COALESCE(req.title, fb.title) AS title,
+                   COALESCE(req.subtitle, fb.subtitle) AS subtitle,
+                   COALESCE(req.description, fb.description) AS description,
+                   p.category, p.subcategory, p.price, p.image_urls, p.is_displayed, p.is_deleted
+            FROM products p
+            LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = @language
+            LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+            WHERE 1=1";
         if (!string.IsNullOrEmpty(search))
         {
-            itemsSql += " AND (title LIKE @search OR description LIKE @search)";
+            itemsSql += " AND (COALESCE(req.title, fb.title) LIKE @search OR COALESCE(req.description, fb.description) LIKE @search)";
         }
-        itemsSql += " ORDER BY created_at DESC LIMIT @limit OFFSET @offset";
+        itemsSql += " ORDER BY p.created_at DESC LIMIT @limit OFFSET @offset";
 
         await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
         {
+            itemsCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -222,15 +284,45 @@ public class ProductRepository : IProductRepository
         return (items, totalCount);
     }
 
-    public async Task CreateCategoryAsync(Category category)
+    public async Task CreateCategoryAsync(Category category, string language = "en")
     {
-        const string sql = "INSERT INTO categories (name, slug) VALUES (@name, @slug)";
+        // categories.id is AUTO_INCREMENT, so the base row is inserted first and its
+        // generated id is read back before the translation row can reference it.
+        const string insertCategorySql = "INSERT INTO categories (slug) VALUES (@slug)";
+        const string insertTranslationSql = @"
+            INSERT INTO category_translations (category_id, language_code, name)
+            VALUES (@categoryId, @language, @name)";
+
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@name", category.Name);
-        cmd.Parameters.AddWithValue("@slug", category.Slug);
-        await cmd.ExecuteNonQueryAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        try
+        {
+            int categoryId;
+            await using (var cmd = new MySqlCommand(insertCategorySql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@slug", category.Slug);
+                await cmd.ExecuteNonQueryAsync();
+                categoryId = (int)cmd.LastInsertedId;
+            }
+
+            await using (var cmd = new MySqlCommand(insertTranslationSql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@categoryId", categoryId);
+                cmd.Parameters.AddWithValue("@language", language);
+                cmd.Parameters.AddWithValue("@name", category.Name);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            category.Id = categoryId;
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
     public async Task<bool> CategoryExistsAsync(int categoryId)
@@ -255,7 +347,7 @@ public class ProductRepository : IProductRepository
         return Convert.ToInt32(result) > 0;
     }
 
-    public async Task<(List<Category> Items, int TotalCount)> GetCategoriesPaginatedAsync(int page, int pageSize, string? search)
+    public async Task<(List<Category> Items, int TotalCount)> GetCategoriesPaginatedAsync(int page, int pageSize, string? search, string language = "en")
     {
         var items = new List<Category>();
         int totalCount = 0;
@@ -264,13 +356,18 @@ public class ProductRepository : IProductRepository
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        var countSql = "SELECT COUNT(1) FROM categories";
+        // search matches translated name (with fallback) or the canonical, non-translatable slug
+        var countSql = @"
+            SELECT COUNT(1) FROM categories c
+            LEFT JOIN category_translations req ON req.category_id = c.id AND req.language_code = @language
+            LEFT JOIN category_translations fb ON fb.category_id = c.id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            countSql += " WHERE name LIKE @search OR slug LIKE @search";
+            countSql += " WHERE (COALESCE(req.name, fb.name) LIKE @search OR c.slug LIKE @search)";
         }
         await using (var countCmd = new MySqlCommand(countSql, conn))
         {
+            countCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -278,15 +375,20 @@ public class ProductRepository : IProductRepository
             totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
         }
 
-        var itemsSql = "SELECT id, name, slug FROM categories";
+        var itemsSql = @"
+            SELECT c.id, COALESCE(req.name, fb.name) AS name, c.slug
+            FROM categories c
+            LEFT JOIN category_translations req ON req.category_id = c.id AND req.language_code = @language
+            LEFT JOIN category_translations fb ON fb.category_id = c.id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            itemsSql += " WHERE name LIKE @search OR slug LIKE @search";
+            itemsSql += " WHERE (COALESCE(req.name, fb.name) LIKE @search OR c.slug LIKE @search)";
         }
         itemsSql += " ORDER BY name ASC LIMIT @limit OFFSET @offset";
 
         await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
         {
+            itemsCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -309,30 +411,67 @@ public class ProductRepository : IProductRepository
         return (items, totalCount);
     }
 
-    public async Task CreateSubcategoryAsync(Subcategory subcategory)
+    public async Task CreateSubcategoryAsync(Subcategory subcategory, string language = "en")
     {
-        const string sql = "INSERT INTO subcategories (category_id, name) VALUES (@categoryId, @name)";
+        // subcategories.id is AUTO_INCREMENT, so the base row is inserted first and its
+        // generated id is read back before the translation row can reference it.
+        const string insertSubcategorySql = "INSERT INTO subcategories (category_id) VALUES (@categoryId)";
+        const string insertTranslationSql = @"
+            INSERT INTO subcategory_translations (subcategory_id, language_code, name)
+            VALUES (@subcategoryId, @language, @name)";
+
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
-        await using var cmd = new MySqlCommand(sql, conn);
-        cmd.Parameters.AddWithValue("@categoryId", subcategory.CategoryId);
-        cmd.Parameters.AddWithValue("@name", subcategory.Name);
-        await cmd.ExecuteNonQueryAsync();
+        await using var transaction = await conn.BeginTransactionAsync();
+
+        try
+        {
+            int subcategoryId;
+            await using (var cmd = new MySqlCommand(insertSubcategorySql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@categoryId", subcategory.CategoryId);
+                await cmd.ExecuteNonQueryAsync();
+                subcategoryId = (int)cmd.LastInsertedId;
+            }
+
+            await using (var cmd = new MySqlCommand(insertTranslationSql, conn, transaction))
+            {
+                cmd.Parameters.AddWithValue("@subcategoryId", subcategoryId);
+                cmd.Parameters.AddWithValue("@language", language);
+                cmd.Parameters.AddWithValue("@name", subcategory.Name);
+                await cmd.ExecuteNonQueryAsync();
+            }
+
+            subcategory.Id = subcategoryId;
+            await transaction.CommitAsync();
+        }
+        catch
+        {
+            await transaction.RollbackAsync();
+            throw;
+        }
     }
 
-    public async Task<bool> SubcategoryExistsAsync(int categoryId, string name)
+    public async Task<bool> SubcategoryExistsAsync(int categoryId, string name, string language = "en")
     {
-        const string sql = "SELECT COUNT(1) FROM subcategories WHERE category_id = @categoryId AND name = @name";
+        // uq_subcat_name was dropped along with subcategories.name in the translation-table
+        // migration; duplicate-name prevention is now an app-level check against the
+        // translation table for the given language, scoped by category via a join.
+        const string sql = @"
+            SELECT COUNT(1) FROM subcategory_translations st
+            JOIN subcategories s ON s.id = st.subcategory_id
+            WHERE s.category_id = @categoryId AND st.language_code = @language AND st.name = @name";
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@categoryId", categoryId);
+        cmd.Parameters.AddWithValue("@language", language);
         cmd.Parameters.AddWithValue("@name", name);
         var result = await cmd.ExecuteScalarAsync();
         return Convert.ToInt32(result) > 0;
     }
 
-    public async Task<(List<Subcategory> Items, int TotalCount)> GetSubcategoriesPaginatedAsync(int page, int pageSize, string? search)
+    public async Task<(List<Subcategory> Items, int TotalCount)> GetSubcategoriesPaginatedAsync(int page, int pageSize, string? search, string language = "en")
     {
         var items = new List<Subcategory>();
         int totalCount = 0;
@@ -341,13 +480,17 @@ public class ProductRepository : IProductRepository
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
 
-        var countSql = "SELECT COUNT(1) FROM subcategories";
+        var countSql = @"
+            SELECT COUNT(1) FROM subcategories s
+            LEFT JOIN subcategory_translations req ON req.subcategory_id = s.id AND req.language_code = @language
+            LEFT JOIN subcategory_translations fb ON fb.subcategory_id = s.id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            countSql += " WHERE name LIKE @search";
+            countSql += " WHERE COALESCE(req.name, fb.name) LIKE @search";
         }
         await using (var countCmd = new MySqlCommand(countSql, conn))
         {
+            countCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 countCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -355,15 +498,20 @@ public class ProductRepository : IProductRepository
             totalCount = Convert.ToInt32(await countCmd.ExecuteScalarAsync());
         }
 
-        var itemsSql = "SELECT id, category_id, name FROM subcategories";
+        var itemsSql = @"
+            SELECT s.id, s.category_id, COALESCE(req.name, fb.name) AS name
+            FROM subcategories s
+            LEFT JOIN subcategory_translations req ON req.subcategory_id = s.id AND req.language_code = @language
+            LEFT JOIN subcategory_translations fb ON fb.subcategory_id = s.id AND fb.language_code = 'en'";
         if (!string.IsNullOrEmpty(search))
         {
-            itemsSql += " WHERE name LIKE @search";
+            itemsSql += " WHERE COALESCE(req.name, fb.name) LIKE @search";
         }
         itemsSql += " ORDER BY name ASC LIMIT @limit OFFSET @offset";
 
         await using (var itemsCmd = new MySqlCommand(itemsSql, conn))
         {
+            itemsCmd.Parameters.AddWithValue("@language", language);
             if (!string.IsNullOrEmpty(search))
             {
                 itemsCmd.Parameters.AddWithValue("@search", $"%{search}%");
@@ -386,14 +534,24 @@ public class ProductRepository : IProductRepository
         return (items, totalCount);
     }
 
-    public async Task<Product?> GetProductByIdAsync(string productId)
+    public async Task<Product?> GetProductByIdAsync(string productId, string language = "en")
     {
-        const string sql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls, is_displayed FROM products WHERE product_id = @productId AND is_deleted = 0";
+        const string sql = @"
+            SELECT p.product_id,
+                   COALESCE(req.title, fb.title) AS title,
+                   COALESCE(req.subtitle, fb.subtitle) AS subtitle,
+                   COALESCE(req.description, fb.description) AS description,
+                   p.category, p.subcategory, p.price, p.image_urls, p.is_displayed
+            FROM products p
+            LEFT JOIN product_translations req ON req.product_id = p.product_id AND req.language_code = @language
+            LEFT JOIN product_translations fb ON fb.product_id = p.product_id AND fb.language_code = 'en'
+            WHERE p.product_id = @productId AND p.is_deleted = 0";
 
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
         await using var cmd = new MySqlCommand(sql, conn);
         cmd.Parameters.AddWithValue("@productId", productId);
+        cmd.Parameters.AddWithValue("@language", language);
 
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync())
@@ -434,7 +592,7 @@ public class ProductRepository : IProductRepository
         return partIds;
     }
 
-    public async Task UpdateProductWithPartsAsync(Product product, List<string> partIds)
+    public async Task UpdateProductWithPartsAsync(Product product, List<string> partIds, string language = "en")
     {
         await using var conn = new MySqlConnection(_connectionString);
         await conn.OpenAsync();
@@ -455,25 +613,38 @@ public class ProductRepository : IProductRepository
                 }
             }
 
-            // 1. Update product
+            // 1. Update product (non-translatable columns only)
             const string updateProductSql = @"
-                UPDATE products 
-                SET title = @title, subtitle = @subtitle, description = @description, 
-                    category = @category, subcategory = @subcategory, price = @price, 
+                UPDATE products
+                SET category = @category, subcategory = @subcategory, price = @price,
                     image_urls = @imageUrls, is_displayed = @isDisplayed
                 WHERE product_id = @productId AND is_deleted = 0";
 
             await using var productCmd = new MySqlCommand(updateProductSql, conn, transaction);
             productCmd.Parameters.AddWithValue("@productId", product.ProductId);
-            productCmd.Parameters.AddWithValue("@title", product.Title);
-            productCmd.Parameters.AddWithValue("@subtitle", (object?)product.Subtitle ?? DBNull.Value);
-            productCmd.Parameters.AddWithValue("@description", (object?)product.Description ?? DBNull.Value);
             productCmd.Parameters.AddWithValue("@category", product.Category);
             productCmd.Parameters.AddWithValue("@subcategory", (object?)product.Subcategory ?? DBNull.Value);
             productCmd.Parameters.AddWithValue("@price", product.Price);
             productCmd.Parameters.AddWithValue("@imageUrls", product.ImageUrls != null ? System.Text.Json.JsonSerializer.Serialize(product.ImageUrls) : DBNull.Value);
             productCmd.Parameters.AddWithValue("@isDisplayed", product.IsDisplayed);
             await productCmd.ExecuteNonQueryAsync();
+
+            // 1b. Upsert the translation row for the given language — a PUT with a
+            // different language adds/updates that translation without touching others.
+            const string upsertTranslationSql = @"
+                INSERT INTO product_translations (product_id, language_code, title, subtitle, description)
+                VALUES (@productId, @language, @title, @subtitle, @description)
+                ON DUPLICATE KEY UPDATE title = VALUES(title), subtitle = VALUES(subtitle), description = VALUES(description)";
+
+            await using (var translationCmd = new MySqlCommand(upsertTranslationSql, conn, transaction))
+            {
+                translationCmd.Parameters.AddWithValue("@productId", product.ProductId);
+                translationCmd.Parameters.AddWithValue("@language", language);
+                translationCmd.Parameters.AddWithValue("@title", product.Title);
+                translationCmd.Parameters.AddWithValue("@subtitle", (object?)product.Subtitle ?? DBNull.Value);
+                translationCmd.Parameters.AddWithValue("@description", (object?)product.Description ?? DBNull.Value);
+                await translationCmd.ExecuteNonQueryAsync();
+            }
 
             // 2. Delete existing relationships in product_parts
             const string deleteRelationSql = "DELETE FROM product_parts WHERE product_id = @productId";
