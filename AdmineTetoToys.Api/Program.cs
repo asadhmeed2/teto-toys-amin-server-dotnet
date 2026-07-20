@@ -33,5 +33,6 @@ app.MapAdminAuthEndpoints();
 app.MapAdminUserEndpoints();
 app.MapAdminProductEndpoints();
 app.MapAdminCategoryEndpoints();
+app.MapAdminLanguageEndpoints();
 
 app.Run();

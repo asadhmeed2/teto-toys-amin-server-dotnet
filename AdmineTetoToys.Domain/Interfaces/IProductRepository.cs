@@ -22,4 +22,6 @@ public interface IProductRepository
     Task CreateSubcategoryAsync(Subcategory subcategory, string language = "en");
     Task<bool> SubcategoryExistsAsync(int categoryId, string name, string language = "en");
     Task<(List<Subcategory> Items, int TotalCount)> GetSubcategoriesPaginatedAsync(int page, int pageSize, string? search, string language = "en");
+
+    Task<List<(string Code, string Name, bool IsRtl)>> GetLanguagesAsync();
 }

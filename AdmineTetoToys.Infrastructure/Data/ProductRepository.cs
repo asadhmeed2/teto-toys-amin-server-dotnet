@@ -753,10 +753,10 @@ public class ProductRepository : IProductRepository
     private async Task RecalculateCategoryActiveCountAsync(MySqlConnection conn, MySqlTransaction? transaction, int categoryId)
     {
         const string sql = @"
-            UPDATE categories 
+            UPDATE categories
             SET number_of_active_products = (
-                SELECT COUNT(*) 
-                FROM products 
+                SELECT COUNT(*)
+                FROM products
                 WHERE category = @categoryId AND is_deleted = 0 AND is_displayed = 1
             )
             WHERE id = @categoryId";
@@ -764,5 +764,26 @@ public class ProductRepository : IProductRepository
         await using var cmd = new MySqlCommand(sql, conn, transaction);
         cmd.Parameters.AddWithValue("@categoryId", categoryId);
         await cmd.ExecuteNonQueryAsync();
+    }
+
+    public async Task<List<(string Code, string Name, bool IsRtl)>> GetLanguagesAsync()
+    {
+        await using var conn = new MySqlConnection(_connectionString);
+        await conn.OpenAsync();
+
+        const string sql = "SELECT code, name, is_rtl FROM system_languages ORDER BY code";
+        await using var cmd = new MySqlCommand(sql, conn);
+        await using var reader = await cmd.ExecuteReaderAsync();
+
+        var result = new List<(string Code, string Name, bool IsRtl)>();
+        while (await reader.ReadAsync())
+        {
+            result.Add((
+                Code: reader.GetString("code"),
+                Name: reader.GetString("name"),
+                IsRtl: reader.GetInt32("is_rtl") == 1
+            ));
+        }
+        return result;
     }
 }
