@@ -779,9 +779,9 @@ public class ProductRepository : IProductRepository
         while (await reader.ReadAsync())
         {
             result.Add((
-                Code: reader.GetString("code"),
-                Name: reader.GetString("name"),
-                IsRtl: reader.GetInt32("is_rtl") == 1
+                Code: reader.GetString(reader.GetOrdinal("code")),
+                Name: reader.GetString(reader.GetOrdinal("name")),
+                IsRtl: reader.GetInt32(reader.GetOrdinal("is_rtl")) == 1
             ));
         }
         return result;
